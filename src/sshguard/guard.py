@@ -354,16 +354,20 @@ class Guard:
 
 
 def _trusted_file(path: Path) -> bool:
-    """A command file may only come from root or from the user the daemon runs as."""
+    """A command file may only come from root or from the user the daemon runs as.
+
+    Windows has no owner/mode model to check (it reports 0o666 for everything), so the check
+    is a POSIX one; there the spool directory's own ACL is the protection.
+    """
+    if not hasattr(os, "geteuid"):
+        return True
     try:
         st = path.stat()
     except OSError:
         return False
     if st.st_mode & 0o022:
         return False
-    if hasattr(os, "geteuid"):
-        return st.st_uid in (0, os.geteuid())
-    return True
+    return st.st_uid in (0, os.geteuid())
 
 
 def _discard(path: Path, rename_to: str | None) -> None:

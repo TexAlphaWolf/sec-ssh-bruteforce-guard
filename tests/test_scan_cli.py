@@ -102,7 +102,7 @@ def test_cli_check_config(tmp_path, capsys):  # type: ignore[no-untyped-def]
 def config_file(tmp_path: Path) -> Path:
     path = tmp_path / "c.toml"
     path.write_text(
-        f'[state]\npath = "{tmp_path / "state.json"}"\nspool = "{tmp_path / "spool"}"\n'
+        f'[state]\npath = "{(tmp_path / "state.json").as_posix()}"\nspool = "{(tmp_path / "spool").as_posix()}"\n'
     )
     return path
 
@@ -163,7 +163,7 @@ def test_cli_ban_with_an_unwritable_spool(tmp_path, capsys):  # type: ignore[no-
     c = tmp_path / "c.toml"
     blocker = tmp_path / "blocker"
     blocker.write_text("x")
-    c.write_text(f'[state]\nspool = "{blocker}/spool"\n')
+    c.write_text(f'[state]\nspool = "{blocker.as_posix()}/spool"\n')
     assert main(["ban", "-c", str(c), "203.0.113.9"]) == 1
     assert "cannot write to the spool" in capsys.readouterr().err
 

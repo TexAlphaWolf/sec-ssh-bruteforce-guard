@@ -56,7 +56,9 @@ class FileTailer:
         while chunk := fh.read(1 << 16):
             self._buf += chunk
             *whole, self._buf = self._buf.split(b"\n")
-            out.extend(p.decode("utf-8", "replace") for p in whole if len(p) <= MAX_LINE)
+            out.extend(
+                p.decode("utf-8", "replace").rstrip("\r") for p in whole if len(p) <= MAX_LINE
+            )  # a CRLF log must not leave a \r on every line
             if len(self._buf) > MAX_LINE:
                 self._buf = b""  # an endless line without a newline
         return out

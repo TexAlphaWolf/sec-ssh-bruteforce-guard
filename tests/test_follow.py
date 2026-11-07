@@ -203,3 +203,9 @@ def test_stdin_source(monkeypatch):  # type: ignore[no-untyped-def]
     t.join(timeout=5)
     assert [q.get_nowait(), q.get_nowait()] == ["one\n", "two\n"]
     assert stop.is_set()  # the pipe is closed: the daemon can finish
+
+
+def test_crlf_logs_do_not_leave_a_carriage_return(tmp_path):  # type: ignore[no-untyped-def]
+    log = tmp_path / "auth.log"
+    log.write_bytes(b"one\r\ntwo\r\n")
+    assert FileTailer(str(log), from_start=True).poll() == ["one", "two"]
