@@ -1,0 +1,24 @@
+# Default: DRY RUN. It reads the log and says what it would ban; nothing is blocked.
+#   docker compose up -d && docker compose logs -f
+# To really block (this needs the host network and NET_ADMIN, see docs/security.md):
+#   SSHGUARD_BACKEND=nftables docker compose up -d
+services:
+  sshguard:
+    build: .
+    image: sshguard
+    restart: unless-stopped
+    network_mode: host            # nftables rules must land in the host's network namespace
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]          # the only capability it needs
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    environment:
+      SSHGUARD_BACKEND: ${SSHGUARD_BACKEND:-dry-run}
+    volumes:
+      - /var/log:/logs:ro         # the directory: it survives log rotation
+      - sshguard-state:/var/lib/sshguard
+      # - ./config.toml:/etc/sshguard/config.toml:ro   # your own settings (see deploy/config.example.toml)
+
+volumes:
+  sshguard-state:

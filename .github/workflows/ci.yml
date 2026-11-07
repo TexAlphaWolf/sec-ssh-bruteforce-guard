@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: mypy
+      - run: pytest --cov
+
+  windows:
+    name: test (Python 3.14, Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - run: pip install -e ".[dev]"
+      - run: pytest
+
+  nftables:
+    name: real nftables (kernel firewall)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev]"
+      - run: sudo apt-get install -y --no-install-recommends nftables
+      - name: Bans really block traffic, and unbans restore it
+        run: sudo "$(which python)" -m pytest -m nft -v -p no:cacheprovider
+
+  docker:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: docker build -t sshguard .
+      - name: Dry run - an attack is recognised and nothing is blocked
+        run: |
+          mkdir logs && touch logs/auth.log
+          docker run -d --name sg -v "$PWD/logs:/logs:ro" sshguard
+          sleep 5
+          python tools/attack_sim.py live --file logs/auth.log --rate 50 --count 8
+          for i in $(seq 1 20); do
+            docker exec sg python -c "import json; d=json.load(open('/var/lib/sshguard/status.json')); raise SystemExit(0 if d['active_bans']==1 else 1)" && break
+            sleep 1
+          done
+          docker exec sg cat /var/lib/sshguard/status.json
+          docker exec sg python -c "import json; d=json.load(open('/var/lib/sshguard/status.json')); assert d['backend']=='dry-run' and d['bans'][0]['target']=='203.0.113.50'"
+          docker exec sg grep -q 'sshguard_active_bans 1' /var/lib/sshguard/sshguard.prom
+          [ "$(docker inspect -f '{{.State.Health.Status}}' sg)" != unhealthy ]
+          docker rm -f sg
+      - name: With the nftables backend the ban lands in the host firewall
+        run: |
+          : > logs/auth.log
+          docker run -d --name sg2 --network host --cap-drop ALL --cap-add NET_ADMIN \
+            -e SSHGUARD_BACKEND=nftables -v "$PWD/logs:/logs:ro" sshguard
+          sleep 5
+          python tools/attack_sim.py live --file logs/auth.log --rate 50 --count 8 --ip 198.51.100.77
+          for i in $(seq 1 20); do
+            sudo nft list set inet sshguard blocked4 2>/dev/null | grep -q 198.51.100.77 && break
+            sleep 1
+          done
+          sudo nft list table inet sshguard
+          sudo nft list set inet sshguard blocked4 | grep 198.51.100.77
+          docker rm -f sg2
+      - name: The compose file is valid
+        run: docker compose config --quiet
+
+  systemd:
+    name: systemd service (hardened unit)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get install -y --no-install-recommends nftables
+      - name: Install with the script and point it at a test log
+        run: |
+          sudo sh deploy/install.sh
+          sudo systemctl stop sshguard
+          sudo mkdir -p /var/log/sshguard-test && sudo touch /var/log/sshguard-test/auth.log
+          sudo chmod 644 /var/log/sshguard-test/auth.log
+          sudo tee /etc/sshguard/config.toml >/dev/null <<'EOT'
+          [source]
+          paths = ["/var/log/sshguard-test/auth.log"]
+          [backend]
+          kind = "nftables"
+          [metrics]
+          status_file = "/var/lib/sshguard/status.json"
+          interval = "2s"
+          EOT
+          sudo systemctl start sshguard
+          sleep 3
+          systemctl is-active sshguard
+      - name: A simulated attack is banned by the service
+        run: |
+          python3 tools/attack_sim.py live --file /tmp/attack.log --rate 100 --count 8 --ip 203.0.113.99
+          sudo sh -c 'cat /tmp/attack.log >> /var/log/sshguard-test/auth.log'
+          for i in $(seq 1 20); do
+            sudo nft list set inet sshguard blocked4 2>/dev/null | grep -q 203.0.113.99 && break
+            sleep 1
+          done
+          sudo nft list set inet sshguard blocked4 | grep 203.0.113.99
+          systemctl is-active sshguard
+      - name: "`sshguard unban` reaches the running service"
+        run: |
+          sudo /opt/sshguard/venv/bin/sshguard unban -c /etc/sshguard/config.toml 203.0.113.99
+          for i in $(seq 1 20); do
+            sudo nft list set inet sshguard blocked4 | grep -q 203.0.113.99 || break
+            sleep 1
+          done
+          ! sudo nft list set inet sshguard blocked4 | grep -q 203.0.113.99
+      - name: Show the unit's security exposure and the service log
+        if: always()
+        run: |
+          systemd-analyze security sshguard --no-pager | tail -5 || true
+          sudo journalctl -u sshguard --no-pager | tail -30

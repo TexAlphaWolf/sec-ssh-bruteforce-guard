@@ -1,0 +1,45 @@
+[Unit]
+Description=SSH brute-force guard
+Documentation=https://github.com/TexAlphaWolf/sec-ssh-bruteforce-guard
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/sshguard/venv/bin/sshguard run -c /etc/sshguard/config.toml
+User=sshguard
+Group=sshguard
+# adm reads /var/log/auth.log on Debian/Ubuntu, systemd-journal reads the journal.
+SupplementaryGroups=adm systemd-journal
+StateDirectory=sshguard
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+
+# It may change the firewall and nothing else.
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+# If metrics.file points outside /var/lib/sshguard, add that directory here:
+# ReadWritePaths=/var/lib/node_exporter/textfile
+
+[Install]
+WantedBy=multi-user.target

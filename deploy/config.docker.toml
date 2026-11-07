@@ -1,0 +1,15 @@
+# Baked into the image. Mount the host's /var/log at /logs (the DIRECTORY, not the file: log
+# rotation replaces auth.log, and a mounted single file would keep pointing at the old one).
+[source]
+paths = ["/logs/auth.log"]
+
+[state]
+path = "/var/lib/sshguard/state.json"
+spool = "/var/lib/sshguard/spool"
+
+[metrics]
+file = "/var/lib/sshguard/sshguard.prom"
+status_file = "/var/lib/sshguard/status.json"
+interval = "10s"
+
+# The backend is dry-run unless SSHGUARD_BACKEND=nftables is set (see docker-compose.yml).

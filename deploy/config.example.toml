@@ -1,0 +1,71 @@
+# sshguard configuration. Every key is shown with its default; delete what you do not change.
+# Durations are seconds (600) or text: "30s", "10m", "1h", "7d", "2w".
+# A typo in a key name is an error, not a silent default: run `sshguard check-config -c <file>`.
+
+[detect]
+max_failures = 5.0      # weighted failures from one source inside `window` -> ban
+window = "10m"
+slow_max_failures = 15  # the same over `slow_window`: catches "one try every half hour". 0 = off
+slow_window = "24h"
+max_users = 10          # distinct user names tried inside `window` -> ban (password spraying). 0 = off
+ipv6_prefix = 64        # IPv6 sources are counted and banned per /64
+max_tracked = 100000    # memory bound: sources followed at once
+forgive_on_success = true  # a successful login clears that user's earlier failures from that address
+
+[detect.weights]        # what each kind of event is worth
+failed_auth = 1.0       # a wrong password / key
+invalid_user = 0.0      # "Invalid user x": informative, counted by max_users only
+preauth_drop = 0.5      # a client that named a user, then left or was dropped before logging in
+probe = 0.2             # connected and left, or sent garbage, without trying to log in
+
+[ban]
+ttl = "1h"              # first ban
+recidive = true         # repeat offenders wait longer ...
+multiplier = 4          # ... this many times longer per strike (1h, 4h, 16h, ...)
+max_ttl = "7d"
+strike_memory = "30d"   # a quiet month clears the record
+max_active = 10000      # safety valve: when full, the ban that ends soonest is dropped
+
+[allowlist]
+# NEVER banned. Put here: your own addresses, your VPN, load balancers and monitoring that
+# open port 22 (a TCP health check is indistinguishable from a probe flood).
+networks = ["127.0.0.0/8", "::1/128"]
+
+[source]
+kind = "file"           # file | journald | stdin
+paths = ["/var/log/auth.log"]   # Debian/Ubuntu. RHEL/Fedora: /var/log/secure. Or use kind = "journald"
+replay = false          # true: also read what is already in the file (log time, see time_source)
+time_source = "arrival" # arrival: the clock when the line is read (robust). log: the line's own timestamp
+tz = "local"            # zone of syslog timestamps (they carry none), e.g. "Europe/Rome"
+identifiers = ["sshd", "sshd-session"]   # journald only
+
+[backend]
+kind = "dry-run"        # dry-run | nftables | command. Start with dry-run, read the log, then switch.
+table = "sshguard"      # nftables: table inet <name>, created and owned by sshguard
+ports = [22]            # nftables: ports to protect. [] = every port for a banned address
+action = "drop"         # drop | reject
+nft_path = "nft"
+# kind = "command": your own argv, no shell. {ip} {ttl} (0 = permanent) {family} are replaced.
+# ban_cmd = ["ipset", "add", "sshguard{family}", "{ip}", "timeout", "{ttl}", "-exist"]
+# unban_cmd = ["ipset", "del", "sshguard{family}", "{ip}", "-exist"]
+# setup_cmd = ["ipset", "create", "sshguard4", "hash:net", "timeout", "0", "-exist"]
+
+[notify]
+# webhook_url = "https://example.org/hook"   # receives JSON {event, target, reason, ...., text}
+# telegram_chat_id = "123456789"             # the token comes from SSHGUARD_TELEGRAM_TOKEN
+on = ["ban"]            # ban | unban | start
+timeout = 5
+
+[state]
+path = "/var/lib/sshguard/state.json"   # bans survive restarts
+spool = "/var/lib/sshguard/spool"       # where `sshguard ban/unban` leave commands for the daemon
+save_interval = "30s"
+
+[metrics]
+# file = "/var/lib/node_exporter/textfile/sshguard.prom"   # node_exporter textfile collector
+# status_file = "/var/lib/sshguard/status.json"
+interval = "15s"
+
+[log]
+level = "INFO"
+format = "text"         # text | json
